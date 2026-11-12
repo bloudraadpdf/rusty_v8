@@ -551,6 +551,23 @@ fn escapable_handle_scope_can_escape_only_once() {
 }
 
 #[test]
+fn raw_isolate_pointer_exposes_non_owning_identity() {
+  let _setup_guard = setup::parallel_test();
+  let isolate = &mut v8::Isolate::new(Default::default());
+  let raw = unsafe { isolate.as_raw_isolate_ptr() };
+  let pointer = raw.as_ptr();
+  assert!(!pointer.is_null());
+  assert!(v8::UnsafeRawIsolatePtr::null().as_ptr().is_null());
+  let restored = unsafe { v8::Isolate::from_raw_ptr(pointer.cast()) };
+  assert_eq!(unsafe { restored.as_raw_isolate_ptr() }.as_ptr(), pointer);
+  assert_eq!(unsafe { isolate.as_raw_isolate_ptr() }.as_ptr(), pointer);
+  v8::scope!(let scope, isolate);
+  let context = v8::Context::new(scope, Default::default());
+  let scope = &mut v8::ContextScope::new(scope, context);
+  assert_eq!(eval(scope, "6 * 7").unwrap().int32_value(scope), Some(42));
+}
+
+#[test]
 fn context_disposed_notification_preserves_live_contexts() {
   let _setup_guard = setup::parallel_test();
   let isolate = &mut v8::Isolate::new(Default::default());

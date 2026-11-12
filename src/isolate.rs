@@ -836,6 +836,14 @@ impl UnsafeRawIsolatePtr {
     self.0.is_null()
   }
 
+  /// Returns the non-owning pointer for isolate identity comparisons.
+  /// The pointer does not extend the isolate's lifetime. It must not be used
+  /// to access the isolate after the isolate has been disposed.
+  #[inline]
+  pub fn as_ptr(&self) -> *mut c_void {
+    self.0.cast()
+  }
+
   #[inline]
   pub(crate) fn as_real_ptr(&self) -> *mut RealIsolate {
     self.0
