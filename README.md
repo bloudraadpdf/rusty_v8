@@ -44,6 +44,13 @@ will occur regularly to stay in sync with Chrome's release cycle.
 
 ## Binary Build
 
+The incumbent-context binding compiles a small C++20 shim against V8's public
+headers and links it with the matching existing archive. This needs a C++20
+compiler but does not rebuild V8. The shim's scope size and alignment are
+checked against those headers during compilation.
+Git checkouts download missing matching generated Rust bindings into Cargo's
+build directory. Packaged generated bindings remain unchanged.
+
 V8 is very large and takes a long time to compile. Many users will prefer to use
 a prebuilt version of V8. We publish static libs for every version of rusty v8
 on [Github](https://github.com/denoland/rusty_v8/releases).

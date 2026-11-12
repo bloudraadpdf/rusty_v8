@@ -551,6 +551,126 @@ fn escapable_handle_scope_can_escape_only_once() {
 }
 
 #[test]
+fn incumbent_context_without_an_entered_context_is_none() {
+  let _setup_guard = setup::parallel_test();
+  let isolate = &mut v8::Isolate::new(Default::default());
+  v8::scope!(let scope, isolate);
+  assert!(scope.get_incumbent_context().is_none());
+  let context = v8::Context::new(scope, Default::default());
+  assert!(scope.get_incumbent_context().is_none());
+  {
+    let scope = &mut v8::ContextScope::new(scope, context);
+    assert_eq!(scope.get_incumbent_context(), Some(context));
+  }
+  assert!(scope.get_incumbent_context().is_none());
+}
+
+#[test]
+fn incumbent_context_backup_scopes_restore_after_nesting_and_unwind() {
+  let _setup_guard = setup::parallel_test();
+  let isolate = &mut v8::Isolate::new(Default::default());
+  v8::scope!(let scope, isolate);
+  let entered = v8::Context::new(scope, Default::default());
+  let backup = v8::Context::new(scope, Default::default());
+  let scope = &mut v8::ContextScope::new(scope, entered);
+  assert_eq!(scope.get_incumbent_context().unwrap(), entered);
+  let result = scope.with_backup_incumbent_scope(backup, |scope| {
+    assert_eq!(scope.get_incumbent_context().unwrap(), backup);
+    assert_eq!(scope.get_current_context(), entered);
+    assert_eq!(scope.get_entered_or_microtask_context(), entered);
+    scope.with_backup_incumbent_scope(entered, |scope| {
+      assert_eq!(scope.get_incumbent_context().unwrap(), entered);
+    });
+    assert_eq!(scope.get_incumbent_context().unwrap(), backup);
+    42
+  });
+  assert_eq!(result, 42);
+  assert_eq!(scope.get_incumbent_context().unwrap(), entered);
+  let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+    scope.with_backup_incumbent_scope(backup, |scope| {
+      assert_eq!(scope.get_incumbent_context().unwrap(), backup);
+      panic!("restore incumbent after Rust unwind");
+    });
+  }));
+  assert!(panic.is_err());
+  assert_eq!(scope.get_incumbent_context().unwrap(), entered);
+}
+
+#[test]
+fn incumbent_context_distinguishes_script_native_and_bound_callbacks() {
+  fn read_incumbent(
+    scope: &mut v8::PinScope,
+    _: v8::FunctionCallbackArguments,
+    mut rv: v8::ReturnValue,
+  ) {
+    let context = scope.get_incumbent_context().unwrap();
+    rv.set(context.global(scope).into());
+  }
+  fn invoke_callback(
+    scope: &mut v8::PinScope,
+    args: v8::FunctionCallbackArguments,
+    mut rv: v8::ReturnValue,
+  ) {
+    let incumbent = scope.get_incumbent_context().unwrap();
+    let callback = v8::Local::<v8::Function>::try_from(args.get(0)).unwrap();
+    let undefined = v8::undefined(scope).into();
+    let result = scope.with_backup_incumbent_scope(incumbent, |scope| {
+      callback.call(scope, undefined, &[])
+    });
+    if let Some(result) = result {
+      rv.set(result);
+    }
+  }
+  let _setup_guard = setup::parallel_test();
+  let isolate = &mut v8::Isolate::new(Default::default());
+  v8::scope!(let scope, isolate);
+  let outer = v8::Context::new(scope, Default::default());
+  let child = v8::Context::new(scope, Default::default());
+  let (read, ordinary, bound) = {
+    let scope = &mut v8::ContextScope::new(scope, child);
+    let read = v8::Function::new(scope, read_incumbent).unwrap();
+    let key = v8::String::new(scope, "readIncumbent").unwrap();
+    child
+      .global(scope)
+      .set(scope, key.into(), read.into())
+      .unwrap();
+    let source = v8::String::new(scope, "(() => readIncumbent())").unwrap();
+    let ordinary = v8::Script::compile(scope, source, None)
+      .unwrap()
+      .run(scope)
+      .unwrap();
+    let source =
+      v8::String::new(scope, "readIncumbent.bind(undefined)").unwrap();
+    let bound = v8::Script::compile(scope, source, None)
+      .unwrap()
+      .run(scope)
+      .unwrap();
+    (read, ordinary, bound)
+  };
+  let scope = &mut v8::ContextScope::new(scope, outer);
+  let invoke = v8::Function::new(scope, invoke_callback).unwrap();
+  let child_global = child.global(scope);
+  for (name, value) in [
+    ("readForeign", read.into()),
+    ("ordinary", ordinary),
+    ("bound", bound),
+    ("invoke", invoke.into()),
+    ("childGlobal", child_global.into()),
+  ] {
+    let key = v8::String::new(scope, name).unwrap();
+    outer.global(scope).set(scope, key.into(), value).unwrap();
+  }
+  let source = v8::String::new(scope,
+    "readForeign() === globalThis && ordinary() === childGlobal && invoke(bound) === globalThis && invoke(ordinary) === childGlobal",
+  ).unwrap();
+  let result = v8::Script::compile(scope, source, None)
+    .unwrap()
+    .run(scope)
+    .unwrap();
+  assert!(result.is_true());
+}
+
+#[test]
 fn context_scope() {
   let _setup_guard = setup::parallel_test();
   let isolate = &mut v8::Isolate::new(Default::default());

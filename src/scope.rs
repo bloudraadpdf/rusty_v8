@@ -522,6 +522,16 @@ impl<'s> HandleScope<'s> {
   }
 }
 
+impl<'s, C> PinnedRef<'s, HandleScope<'_, C>> {
+  /// Returns the incumbent realm's context as defined by HTML, or `None` when
+  /// no context is active.
+  pub fn get_incumbent_context(&self) -> Option<Local<'s, Context>> {
+    let context =
+      unsafe { raw::v8__Isolate__GetIncumbentContext(self.0.isolate.as_ptr()) };
+    unsafe { Local::from_raw(context) }
+  }
+}
+
 impl<'s> PinnedRef<'s, HandleScope<'_>> {
   /// Returns the context of the currently running JavaScript, or the context
   /// on the top of the stack if no JavaScript is running
@@ -549,6 +559,20 @@ impl<'s> PinnedRef<'s, HandleScope<'_>> {
       raw::v8__Isolate__GetEnteredOrMicrotaskContext(self.0.isolate.as_ptr())
     };
     unsafe { Local::from_raw_unchecked(context_ptr) }
+  }
+
+  /// Runs `callback` with `context` on HTML's backup incumbent settings stack.
+  /// The current and entered contexts are unchanged; an active JavaScript
+  /// callback can supply its own incumbent realm. Nested scopes and unwinding
+  /// restore the previous backup.
+  pub fn with_backup_incumbent_scope<R>(
+    &mut self,
+    context: Local<Context>,
+    callback: impl FnOnce(&mut Self) -> R,
+  ) -> R {
+    let mut backup = std::pin::pin!(raw::BackupIncumbentScope::new());
+    backup.as_mut().init(context);
+    callback(self)
   }
 
   /// Return data that was previously attached to the isolate snapshot via

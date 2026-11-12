@@ -22,6 +22,7 @@ fn main() {
   println!("cargo:rerun-if-changed=.gn");
   println!("cargo:rerun-if-changed=BUILD.gn");
   println!("cargo:rerun-if-changed=src/binding.cc");
+  println!("cargo:rerun-if-changed=src/incumbent.cc");
 
   // These are all the environment variables that we check. This is
   // probably more than what is needed, but missing an important
@@ -74,6 +75,7 @@ fn main() {
     return;
   }
 
+  build_incumbent_binding();
   print_link_flags();
 
   // Don't attempt rebuild but link
@@ -121,6 +123,38 @@ fn main() {
   print_prebuilt_src_binding_path();
 
   download_static_lib_binaries();
+}
+
+fn build_incumbent_binding() {
+  let mut build = cc::Build::new();
+  build
+    .cpp(true)
+    .std("c++20")
+    .cpp_link_stdlib(None)
+    .file("src/incumbent.cc")
+    .flag_if_supported("-fno-exceptions")
+    .flag_if_supported("-fno-rtti");
+  if build.get_compiler().is_like_msvc() {
+    build
+      .flag("/external:Iv8/include")
+      .flag("/external:Isrc")
+      .flag("/external:W0");
+  } else {
+    build.flag("-isystemv8/include").flag("-isystemsrc");
+  }
+  for (feature, define) in [
+    ("V8_ENABLE_POINTER_COMPRESSION", "V8_COMPRESS_POINTERS"),
+    ("V8_ENABLE_SANDBOX", "V8_ENABLE_SANDBOX"),
+    ("V8_ENABLE_V8_CHECKS", "V8_ENABLE_CHECKS"),
+  ] {
+    if env::var_os(format!("CARGO_FEATURE_{feature}")).is_some() {
+      build.define(define, None);
+    }
+  }
+  if env::var_os("CARGO_FEATURE_V8_ENABLE_SANDBOX").is_some() {
+    build.define("V8_EXTERNAL_CODE_SPACE", None);
+  }
+  build.compile("rusty_v8_incumbent");
 }
 
 fn acquire_lock() -> LockFile {
@@ -650,7 +684,7 @@ fn download_file(url: &str, filename: &Path) {
 
   // Checksum (i.e: url) to avoid re-downloads
   match fs::read_to_string(static_checksum_path(filename)) {
-    Ok(c) if c == static_lib_url() => return,
+    Ok(c) if c == url && filename.is_file() => return,
     _ => {}
   };
 
@@ -889,9 +923,14 @@ fn print_prebuilt_src_binding_path() {
   let features = prebuilt_features_suffix();
   let name = format!("src_binding{features}_{profile}_{target}.rs");
 
-  let src_binding_path = get_dirs().root.join("gen").join(name.clone());
+  let mut src_binding_path = get_dirs().root.join("gen").join(name.clone());
 
-  if let Ok(base) = env::var("RUSTY_V8_MIRROR") {
+  if env::var_os("RUSTY_V8_MIRROR").is_some() || !src_binding_path.exists() {
+    src_binding_path =
+      PathBuf::from(env::var_os("OUT_DIR").unwrap()).join(&name);
+    let base = env::var("RUSTY_V8_MIRROR").unwrap_or_else(|_| {
+      "https://github.com/denoland/rusty_v8/releases/download".into()
+    });
     let version = env::var("CARGO_PKG_VERSION").unwrap();
     let url = format!("{base}/v{version}/{name}");
     download_file(&url, &src_binding_path);
@@ -1246,6 +1285,25 @@ fn env_bool(key: &str) -> bool {
 #[cfg(test)]
 mod test {
   use super::*;
+
+  #[test]
+  fn cached_binding_download_uses_its_own_url() {
+    let dir = env::current_dir()
+      .unwrap()
+      .join("target")
+      .join(format!("binding-cache-{}", std::process::id()));
+    fs::create_dir_all(&dir).unwrap();
+    let binding = dir.join("binding.rs");
+    let url = "https://example.invalid/binding.rs";
+    fs::write(&binding, "cached binding").unwrap();
+    fs::write(static_checksum_path(&binding), url).unwrap();
+    let result = std::panic::catch_unwind(|| {
+      download_file(url, &binding);
+      assert_eq!(fs::read_to_string(&binding).unwrap(), "cached binding");
+    });
+    fs::remove_dir_all(&dir).unwrap();
+    result.unwrap();
+  }
 
   const MOCK_GRAPH: &str = r#"
 digraph ninja {

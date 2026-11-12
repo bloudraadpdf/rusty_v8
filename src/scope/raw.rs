@@ -4,7 +4,9 @@ use crate::{
   Context, Data, Function, Local, Message, OnFailure, Primitive, Value,
   isolate::RealIsolate,
 };
+use std::marker::PhantomPinned;
 use std::num::NonZeroUsize;
+use std::pin::Pin;
 use std::{
   mem::MaybeUninit,
   ptr::{self, NonNull},
@@ -13,6 +15,47 @@ use std::{
 #[derive(Clone, Copy, Debug)]
 #[repr(transparent)]
 pub(super) struct Address(NonZeroUsize);
+
+#[derive(Debug)]
+pub(super) struct BackupIncumbentScope {
+  storage: [MaybeUninit<usize>; 3],
+  initialized: bool,
+  _pinned: PhantomPinned,
+}
+
+impl BackupIncumbentScope {
+  pub(super) fn new() -> Self {
+    Self {
+      storage: [MaybeUninit::uninit(); 3],
+      initialized: false,
+      _pinned: PhantomPinned,
+    }
+  }
+
+  pub(super) fn init(self: Pin<&mut Self>, context: Local<Context>) {
+    // SAFETY: storage remains pinned until Drop; the C++ shim checks its size and alignment.
+    let this = unsafe { self.get_unchecked_mut() };
+    assert!(!this.initialized);
+    unsafe {
+      v8__BackupIncumbentScope__CONSTRUCT(
+        this.storage.as_mut_ptr().cast(),
+        &*context,
+      );
+    }
+    this.initialized = true;
+  }
+}
+
+impl Drop for BackupIncumbentScope {
+  fn drop(&mut self) {
+    if self.initialized {
+      // SAFETY: init constructed exactly one scope at this pinned address.
+      unsafe {
+        v8__BackupIncumbentScope__DESTRUCT(self.storage.as_mut_ptr().cast())
+      };
+    }
+  }
+}
 
 #[derive(Debug)]
 #[repr(transparent)]
@@ -221,6 +264,14 @@ impl Drop for AllowJavascriptExecutionScope {
 
 unsafe extern "C" {
   pub(super) fn v8__Isolate__GetCurrent() -> *mut RealIsolate;
+  pub(super) fn v8__Isolate__GetIncumbentContext(
+    isolate: *mut RealIsolate,
+  ) -> *const Context;
+  fn v8__BackupIncumbentScope__CONSTRUCT(
+    storage: *mut std::ffi::c_void,
+    context: *const Context,
+  );
+  fn v8__BackupIncumbentScope__DESTRUCT(storage: *mut std::ffi::c_void);
   pub(super) fn v8__Isolate__GetCurrentContext(
     isolate: *mut RealIsolate,
   ) -> *const Context;
