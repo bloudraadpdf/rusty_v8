@@ -108,6 +108,7 @@ pub use handle::Local;
 pub use handle::SealedLocal;
 pub use handle::TracedReference;
 pub use handle::Weak;
+pub use isolate::ContextDependants;
 pub use isolate::GarbageCollectionType;
 pub use isolate::HeapCodeStatistics;
 pub use isolate::HeapSpaceStatistics;

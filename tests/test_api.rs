@@ -551,6 +551,21 @@ fn escapable_handle_scope_can_escape_only_once() {
 }
 
 #[test]
+fn context_disposed_notification_preserves_live_contexts() {
+  let _setup_guard = setup::parallel_test();
+  let isolate = &mut v8::Isolate::new(Default::default());
+  isolate.context_disposed_notification(v8::ContextDependants::NoDependants);
+  v8::scope!(let scope, isolate);
+  let context = v8::Context::new(scope, Default::default());
+  let scope = &mut v8::ContextScope::new(scope, context);
+  scope.context_disposed_notification(v8::ContextDependants::SomeDependants);
+  let value = eval(scope, "40 + 2").unwrap();
+  assert_eq!(value.int32_value(scope), Some(42));
+  scope.context_disposed_notification(v8::ContextDependants::NoDependants);
+  assert_eq!(scope.get_current_context(), context);
+}
+
+#[test]
 fn incumbent_context_without_an_entered_context_is_none() {
   let _setup_guard = setup::parallel_test();
   let isolate = &mut v8::Isolate::new(Default::default());

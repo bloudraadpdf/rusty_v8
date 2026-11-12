@@ -7,8 +7,16 @@
 using BackupIncumbentScope = v8::Context::BackupIncumbentScope;
 static_assert(sizeof(BackupIncumbentScope) == 3 * sizeof(uintptr_t));
 static_assert(alignof(BackupIncumbentScope) == alignof(uintptr_t));
+static_assert(static_cast<uint8_t>(v8::ContextDependants::kNoDependants) == 0);
+static_assert(static_cast<uint8_t>(v8::ContextDependants::kSomeDependants) == 1);
 
 extern "C" {
+void v8__Isolate__ContextDisposedNotification(v8::Isolate* isolate,
+                                            uint8_t dependants) {
+  isolate->ContextDisposedNotification(
+      static_cast<v8::ContextDependants>(dependants));
+}
+
 const v8::Context* v8__Isolate__GetIncumbentContext(v8::Isolate* isolate) {
   if (!isolate->InContext()) return nullptr;
   return support::local_to_ptr(isolate->GetIncumbentContext());

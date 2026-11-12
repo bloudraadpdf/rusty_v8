@@ -99,6 +99,14 @@ pub enum MemoryPressureLevel {
   Critical = 2,
 }
 
+/// Whether a disposed context possibly had dependants.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(C)]
+pub enum ContextDependants {
+  NoDependants = 0,
+  SomeDependants = 1,
+}
+
 /// Time zone redetection indicator for
 /// DateTimeConfigurationChangeNotification.
 ///
@@ -623,6 +631,10 @@ unsafe extern "C" {
   fn v8__Isolate__MemoryPressureNotification(this: *mut RealIsolate, level: u8);
   fn v8__Isolate__ClearKeptObjects(isolate: *mut RealIsolate);
   fn v8__Isolate__LowMemoryNotification(isolate: *mut RealIsolate);
+  fn v8__Isolate__ContextDisposedNotification(
+    isolate: *mut RealIsolate,
+    dependants: u8,
+  );
   fn v8__Isolate__SetIdle(isolate: *mut RealIsolate, is_idle: bool);
   fn v8__CpuProfiler__CollectSample(
     isolate: *mut RealIsolate,
@@ -1339,6 +1351,22 @@ impl Isolate {
   #[inline(always)]
   pub fn low_memory_notification(&mut self) {
     unsafe { v8__Isolate__LowMemoryNotification(self.as_real_ptr()) }
+  }
+
+  /// Optional notification that a context has been disposed. V8 uses this
+  /// notification to guide heuristics, including garbage collection and
+  /// compilation. It does not force garbage collection.
+  #[inline(always)]
+  pub fn context_disposed_notification(
+    &mut self,
+    dependants: ContextDependants,
+  ) {
+    unsafe {
+      v8__Isolate__ContextDisposedNotification(
+        self.as_real_ptr(),
+        dependants as u8,
+      )
+    }
   }
 
   /// Tells the VM whether the embedder is currently idle or not.
